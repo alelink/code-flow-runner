@@ -29,6 +29,8 @@ jobs:
           FLOW_QUIET: '1'
           GH_TOKEN: ${{ github.token }}
         run: |
+          # stdout of the block below is discarded; fd 3 keeps the real stdout for ::add-mask:: commands
+          exec 3>&1
           {
             set -e
             dir="$RUNNER_TEMP/fr"
@@ -38,6 +40,8 @@ jobs:
               code=$(curl -sS -o "$dir/ts" -w '%{http_code}' -X POST -H "X-Runner-Token: $FLOW_TOKEN" -H 'Content-Type: application/json' \
                 -d "{\"lease\":\"$FLOW_LEASE\"}" "$FLOW_SERVER/api/open/runner/lease/tailscale")
               if [ "$code" = 200 ]; then
+                # values fetched at runtime are not masked automatically (only repo secrets are)
+                printf '::add-mask::%s\n' "$(cat "$dir/ts")" >&3
                 curl -fsSL https://tailscale.com/install.sh | sh || exit 1
                 sudo tailscale up --authkey="$(cat "$dir/ts")" --hostname="gh-$(printf '%s' "$FLOW_LEASE" | tr -d '-')" --accept-dns=true --timeout=180s || exit 1
                 rm -f "$dir/ts"
