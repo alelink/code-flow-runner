@@ -1,0 +1,39 @@
+# Copy to the public repo as .github/workflows/code-flow-runner.yml
+# Repo secrets: FLOW_SERVER (control plane URL), FLOW_TOKEN (token of a build node created for this purpose)
+#
+# Run logs of a public repo are visible to everyone, so nothing is printed here:
+# - flowrunner runs with -quiet; build logs are only streamed to the control plane, all command output is discarded
+# - the only input is the idle timeout, no business data is passed
+name: runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      idle:
+        description: idle
+        default: 3m
+
+permissions: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: run
+        env:
+          FLOW_SERVER: ${{ secrets.FLOW_SERVER }}
+          FLOW_TOKEN: ${{ secrets.FLOW_TOKEN }}
+          FLOW_IDLE_EXIT: ${{ inputs.idle }}
+          FLOW_QUIET: '1'
+        run: |
+          {
+            set -e
+            dir="$RUNNER_TEMP/fr"
+            mkdir -p "$dir/ws"
+            dl() { curl -fsSL --retry 3 "$FLOW_SERVER/api/open/runner/dist/latest/$1?token=$FLOW_TOKEN"; }
+            ver=$(dl version.txt | tr -d '[:space:]')
+            dl "flowrunner-$ver-linux-amd64.tar.gz" | tar -xz -C "$dir"
+            "$dir/flowrunner" -mode build -parallel 2 -workdir "$dir/ws"
+          } >/dev/null 2>&1 || { echo failed; exit 1; }
+          echo done
