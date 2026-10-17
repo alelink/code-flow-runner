@@ -1,4 +1,3 @@
-# Managed by code-flow: borrowed build machines. Changes are overwritten on the next sync.
 name: runner
 run-name: ${{ inputs.lease || 'manual' }}
 
@@ -7,7 +6,7 @@ on:
     inputs:
       lease:
         description: lease
-        default: ''
+        default: ""
       idle:
         description: idle
         default: 10m
@@ -25,7 +24,7 @@ jobs:
           FLOW_TOKEN: ${{ secrets.FLOW_TOKEN }}
           FLOW_LEASE: ${{ inputs.lease }}
           FLOW_IDLE_EXIT: ${{ inputs.idle }}
-          FLOW_QUIET: '1'
+          FLOW_QUIET: "1"
         run: |
           {
             set -e
