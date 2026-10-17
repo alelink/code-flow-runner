@@ -32,6 +32,19 @@ jobs:
             dir="$RUNNER_TEMP/fr"
             mkdir -p "$dir/ws"
             dl() { curl -fsSL --retry 3 "$FLOW_SERVER/api/open/runner/dist/latest/$1?token=$FLOW_TOKEN"; }
+            if [ -n "$FLOW_LEASE" ]; then
+              code=$(curl -sS -o "$dir/ts" -w '%{http_code}' -X POST -H "X-Runner-Token: $FLOW_TOKEN" -H 'Content-Type: application/json' \
+                -d "{\"lease\":\"$FLOW_LEASE\"}" "$FLOW_SERVER/api/open/runner/lease/tailscale")
+              if [ "$code" = 200 ]; then
+                curl -fsSL https://tailscale.com/install.sh | sh || exit 1
+                sudo tailscale up --authkey="$(cat "$dir/ts")" --hostname="gh-$(printf '%s' "$FLOW_LEASE" | tr -d '-')" --accept-dns=true --timeout=180s || exit 1
+                rm -f "$dir/ts"
+                sudo sh -c 'f=/etc/docker/daemon.json; [ -s $f ] || echo "{}" > $f; jq ". + {\"dns\": [\"100.100.100.100\"]}" $f > $f.new && mv $f.new $f'
+                sudo systemctl restart docker
+              elif [ "$code" != 204 ]; then
+                exit 1
+              fi
+            fi
             ver=$(dl version.txt | tr -d '[:space:]')
             dl "flowrunner-$ver-linux-amd64.tar.gz" | tar -xz -C "$dir"
             "$dir/flowrunner" -mode build -parallel 2 -workdir "$dir/ws"
