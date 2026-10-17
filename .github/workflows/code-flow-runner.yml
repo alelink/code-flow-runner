@@ -1,29 +1,29 @@
-# Copy to the public repo as .github/workflows/code-flow-runner.yml
-# Repo secrets: FLOW_SERVER (control plane URL), FLOW_TOKEN (token of a build node created for this purpose)
-#
-# Run logs of a public repo are visible to everyone, so nothing is printed here:
-# - flowrunner runs with -quiet; build logs are only streamed to the control plane, all command output is discarded
-# - the only input is the idle timeout, no business data is passed
+# Managed by code-flow: borrowed build machines. Changes are overwritten on the next sync.
 name: runner
+run-name: ${{ inputs.lease || 'manual' }}
 
 on:
   workflow_dispatch:
     inputs:
+      lease:
+        description: lease
+        default: ''
       idle:
         description: idle
-        default: 3m
+        default: 10m
 
 permissions: {}
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 360
     steps:
       - name: run
         env:
           FLOW_SERVER: ${{ secrets.FLOW_SERVER }}
           FLOW_TOKEN: ${{ secrets.FLOW_TOKEN }}
+          FLOW_LEASE: ${{ inputs.lease }}
           FLOW_IDLE_EXIT: ${{ inputs.idle }}
           FLOW_QUIET: '1'
         run: |
