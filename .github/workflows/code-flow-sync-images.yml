@@ -34,6 +34,8 @@ jobs:
           src=$(printf '%s' "$cred" | jq -r .registry)
           user=$(printf '%s' "$cred" | jq -r .username)
           pass=$(printf '%s' "$cred" | jq -r .password)
+          # values fetched at runtime are not masked automatically (only repo secrets are)
+          printf '::add-mask::%s\n' "$pass"
           command -v skopeo >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo; } >/dev/null 2>&1
           dst="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr 'A-Z' 'a-z')"
           failed=0
