@@ -28,7 +28,7 @@ jobs:
           IMAGES: ${{ inputs.images }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          api() { curl -fsS --retry 3 -X POST -H "X-Runner-Token: $FLOW_TOKEN" -H 'Content-Type: application/json' -d "$2" "$FLOW_SERVER/api/open/runner/ghcr/$1"; }
+          api() { curl -fsS --retry 3 -X POST -H "x-runner-token: $FLOW_TOKEN" -H 'Content-Type: application/json' -d "$2" "$FLOW_SERVER/api/open/runner/ghcr/$1"; }
           report() { api report "$1" >/dev/null 2>&1 || true; }
           cred=$(api credential "$(jq -nc --arg s "$SYNC_ID" '{sync:$s}')" 2>/dev/null) || { echo failed; exit 1; }
           src=$(printf '%s' "$cred" | jq -r .registry)
