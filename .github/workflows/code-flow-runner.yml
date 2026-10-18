@@ -50,7 +50,7 @@ jobs:
             dl() { curl -fsSL --retry 3 "$FLOW_SERVER/api/open/runner/dist/latest/$1?token=$FLOW_TOKEN"; }
             os=$(uname -s | tr 'A-Z' 'a-z')
             if [ -n "$FLOW_LEASE" ]; then
-              code=$(curl -sS -o "$dir/ts" -w '%{http_code}' -X POST -H "X-Runner-Token: $FLOW_TOKEN" -H 'Content-Type: application/json' \
+              code=$(curl -sS -o "$dir/ts" -w '%{http_code}' -X POST -H "x-runner-token: $FLOW_TOKEN" -H 'Content-Type: application/json' \
                 -d "{\"lease\":\"$FLOW_LEASE\"}" "$FLOW_SERVER/api/open/runner/lease/tailscale")
               if [ "$code" = 200 ]; then
                 # values fetched at runtime are not masked automatically (only repo secrets are)
