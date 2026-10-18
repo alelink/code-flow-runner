@@ -11,13 +11,22 @@ on:
       idle:
         description: idle
         default: 10m
+      runs_on:
+        description: machine
+        type: choice
+        default: ubuntu-latest
+        options:
+          - ubuntu-latest
+          - ubuntu-22.04
+          - ubuntu-24.04-arm
+          - ubuntu-22.04-arm
 
 permissions:
   packages: read
 
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
     timeout-minutes: 360
     steps:
       - name: run
@@ -54,7 +63,8 @@ jobs:
             # step images synced to GHCR are pulled from here (see SYNC_WORKFLOW_YAML)
             printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
             ver=$(dl version.txt | tr -d '[:space:]')
-            dl "flowrunner-$ver-linux-amd64.tar.gz" | tar -xz -C "$dir"
+            case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
+            dl "flowrunner-$ver-linux-$arch.tar.gz" | tar -xz -C "$dir"
             "$dir/flowrunner" -mode build -parallel 2 -workdir "$dir/ws"
           } >/dev/null 2>&1 || { echo failed; exit 1; }
           echo done
