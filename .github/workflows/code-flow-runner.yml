@@ -20,6 +20,9 @@ on:
           - ubuntu-22.04
           - ubuntu-24.04-arm
           - ubuntu-22.04-arm
+          - macos-latest
+          - macos-15
+          - macos-14
 
 permissions:
   packages: read
@@ -45,26 +48,42 @@ jobs:
             dir="$RUNNER_TEMP/fr"
             mkdir -p "$dir/ws"
             dl() { curl -fsSL --retry 3 "$FLOW_SERVER/api/open/runner/dist/latest/$1?token=$FLOW_TOKEN"; }
+            os=$(uname -s | tr 'A-Z' 'a-z')
             if [ -n "$FLOW_LEASE" ]; then
               code=$(curl -sS -o "$dir/ts" -w '%{http_code}' -X POST -H "X-Runner-Token: $FLOW_TOKEN" -H 'Content-Type: application/json' \
                 -d "{\"lease\":\"$FLOW_LEASE\"}" "$FLOW_SERVER/api/open/runner/lease/tailscale")
               if [ "$code" = 200 ]; then
                 # values fetched at runtime are not masked automatically (only repo secrets are)
                 printf '::add-mask::%s\n' "$(cat "$dir/ts")" >&3
-                curl -fsSL https://tailscale.com/install.sh | sh || exit 1
-                sudo tailscale up --authkey="$(cat "$dir/ts")" --hostname="gh-$(printf '%s' "$FLOW_LEASE" | tr -d '-')" --accept-dns=true --timeout=180s || exit 1
+                if [ "$os" = linux ]; then
+                  curl -fsSL https://tailscale.com/install.sh | sh || exit 1
+                  ts=tailscale
+                  dns=true
+                else
+                  # macOS: the install script is Linux only; use the open-source tailscaled from Homebrew (state kept in memory)
+                  HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install tailscale || exit 1
+                  ts="$(brew --prefix)/bin/tailscale"
+                  sudo "$(brew --prefix)/bin/tailscaled" --state=mem: &
+                  sleep 5
+                  dns=false
+                fi
+                sudo "$ts" up --authkey="$(cat "$dir/ts")" --hostname="gh-$(printf '%s' "$FLOW_LEASE" | tr -d '-')" --accept-dns=$dns --timeout=180s || exit 1
                 rm -f "$dir/ts"
-                sudo sh -c 'f=/etc/docker/daemon.json; [ -s $f ] || echo "{}" > $f; jq ". + {\"dns\": [\"100.100.100.100\"]}" $f > $f.new && mv $f.new $f'
-                sudo systemctl restart docker
+                if [ "$os" = linux ]; then
+                  sudo sh -c 'f=/etc/docker/daemon.json; [ -s $f ] || echo "{}" > $f; jq ". + {\"dns\": [\"100.100.100.100\"]}" $f > $f.new && mv $f.new $f'
+                  sudo systemctl restart docker
+                fi
               elif [ "$code" != 204 ]; then
                 exit 1
               fi
             fi
             # step images synced to GHCR are pulled from here (see SYNC_WORKFLOW_YAML)
-            printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            if [ "$os" = linux ]; then
+              printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            fi
             ver=$(dl version.txt | tr -d '[:space:]')
             case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
-            dl "flowrunner-$ver-linux-$arch.tar.gz" | tar -xz -C "$dir"
+            dl "flowrunner-$ver-$os-$arch.tar.gz" | tar -xz -C "$dir"
             "$dir/flowrunner" -mode build -parallel 2 -workdir "$dir/ws"
           } >/dev/null 2>&1 || { echo failed; exit 1; }
           echo done
