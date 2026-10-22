@@ -50,6 +50,9 @@ jobs:
           exec 3>&1
           {
             set -e
+            # only line numbers / HTTP codes reach the public log: enough to tell which step failed
+            trap 'echo "failed at line $LINENO" >&3' ERR
+            fail() { echo "failed: $1" >&3; exit 1; }
             dir="$RUNNER_TEMP/fr"
             mkdir -p "$dir/ws"
             dl() { curl -fsSL --retry 3 "$FLOW_SERVER/api/open/runner/dist/latest/$1?token=$FLOW_TOKEN"; }
@@ -70,31 +73,31 @@ jobs:
                 # values fetched at runtime are not masked automatically (only repo secrets are)
                 printf '::add-mask::%s\n' "$(cat "$dir/ts")" >&3
                 if [ "$os" = linux ]; then
-                  curl -fsSL https://tailscale.com/install.sh | sh || exit 1
+                  curl -fsSL https://tailscale.com/install.sh | sh || fail "tailscale install"
                   ts=tailscale
                   dns=true
                 elif [ "$os" = windows ]; then
                   # Windows: the official MSI installs and starts the Tailscale service (the job runs as admin)
-                  choco install tailscale -y --no-progress || exit 1
+                  choco install tailscale -y --no-progress || fail "tailscale install"
                   ts="/c/Program Files/Tailscale/tailscale.exe"
                   sleep 5
                   dns=false
                 else
                   # macOS: the install script is Linux only; use the open-source tailscaled from Homebrew (state kept in memory)
-                  HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install tailscale || exit 1
+                  HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install tailscale || fail "tailscale install"
                   ts="$(brew --prefix)/bin/tailscale"
                   sudo "$(brew --prefix)/bin/tailscaled" --state=mem: &
                   sleep 5
                   dns=false
                 fi
-                $sudo "$ts" up --authkey="$(cat "$dir/ts")" --hostname="gh-$(printf '%s' "$FLOW_LEASE" | tr -d '-')" --accept-dns=$dns --timeout=180s || exit 1
+                $sudo "$ts" up --authkey="$(cat "$dir/ts")" --hostname="gh-$(printf '%s' "$FLOW_LEASE" | tr -d '-')" --accept-dns=$dns --timeout=180s || fail "tailscale up"
                 rm -f "$dir/ts"
                 if [ "$os" = linux ]; then
                   sudo sh -c 'f=/etc/docker/daemon.json; [ -s $f ] || echo "{}" > $f; jq ". + {\"dns\": [\"100.100.100.100\"]}" $f > $f.new && mv $f.new $f'
                   sudo systemctl restart docker
                 fi
               elif [ "$code" != 204 ]; then
-                exit 1
+                fail "tailscale key http $code"
               fi
             fi
             # step images synced to GHCR are pulled from here (see SYNC_WORKFLOW_YAML)
