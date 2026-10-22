@@ -110,9 +110,7 @@ jobs:
               bin="$bin.exe"
               if ! python3 --version >/dev/null 2>&1; then
                 mkdir -p "$dir/bin"
-                printf '#!/bin/sh
-exec python "$@"
-' > "$dir/bin/python3"
+                printf '#!/bin/sh\nexec python "$@"\n' > "$dir/bin/python3"
                 export PATH="$dir/bin:$PATH"
               fi
             fi
