@@ -24,6 +24,8 @@ on:
           - macos-26
           - macos-15
           - macos-14
+          - windows-latest
+          - windows-2022
 
 permissions:
   packages: read
@@ -34,6 +36,8 @@ jobs:
     timeout-minutes: 360
     steps:
       - name: run
+        # Git Bash on Windows; on Linux / macOS the same bash with pipefail
+        shell: bash
         env:
           FLOW_SERVER: ${{ secrets.FLOW_SERVER }}
           FLOW_TOKEN: ${{ secrets.FLOW_TOKEN }}
@@ -50,6 +54,15 @@ jobs:
             mkdir -p "$dir/ws"
             dl() { curl -fsSL --retry 3 "$FLOW_SERVER/api/open/runner/dist/latest/$1?token=$FLOW_TOKEN"; }
             os=$(uname -s | tr 'A-Z' 'a-z')
+            case "$os" in mingw*|msys*|cygwin*) os=windows ;; esac
+            sudo=sudo
+            if [ "$os" = windows ]; then
+              sudo=
+              # POSIX path: "D:\a\_temp" would break PATH (":" separator); native programs get it converted back
+              dir="$(cygpath -u "$RUNNER_TEMP")/fr"
+              # keep LF line endings in checked out sources (the image default converts to CRLF and breaks shell scripts)
+              git config --global core.autocrlf false
+            fi
             if [ -n "$FLOW_LEASE" ]; then
               code=$(curl -sS -o "$dir/ts" -w '%{http_code}' -X POST -H "x-runner-token: $FLOW_TOKEN" -H 'Content-Type: application/json' \
                 -d "{\"lease\":\"$FLOW_LEASE\"}" "$FLOW_SERVER/api/open/runner/lease/tailscale")
@@ -60,6 +73,12 @@ jobs:
                   curl -fsSL https://tailscale.com/install.sh | sh || exit 1
                   ts=tailscale
                   dns=true
+                elif [ "$os" = windows ]; then
+                  # Windows: the official MSI installs and starts the Tailscale service (the job runs as admin)
+                  choco install tailscale -y --no-progress || exit 1
+                  ts="/c/Program Files/Tailscale/tailscale.exe"
+                  sleep 5
+                  dns=false
                 else
                   # macOS: the install script is Linux only; use the open-source tailscaled from Homebrew (state kept in memory)
                   HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install tailscale || exit 1
@@ -68,7 +87,7 @@ jobs:
                   sleep 5
                   dns=false
                 fi
-                sudo "$ts" up --authkey="$(cat "$dir/ts")" --hostname="gh-$(printf '%s' "$FLOW_LEASE" | tr -d '-')" --accept-dns=$dns --timeout=180s || exit 1
+                $sudo "$ts" up --authkey="$(cat "$dir/ts")" --hostname="gh-$(printf '%s' "$FLOW_LEASE" | tr -d '-')" --accept-dns=$dns --timeout=180s || exit 1
                 rm -f "$dir/ts"
                 if [ "$os" = linux ]; then
                   sudo sh -c 'f=/etc/docker/daemon.json; [ -s $f ] || echo "{}" > $f; jq ". + {\"dns\": [\"100.100.100.100\"]}" $f > $f.new && mv $f.new $f'
@@ -85,6 +104,18 @@ jobs:
             ver=$(dl version.txt | tr -d '[:space:]')
             case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
             dl "flowrunner-$ver-$os-$arch.tar.gz" | tar -xz -C "$dir"
-            "$dir/flowrunner" -mode build -parallel 2 -workdir "$dir/ws"
+            bin="$dir/flowrunner"
+            if [ "$os" = windows ]; then
+              mv "$bin" "$bin.exe"
+              bin="$bin.exe"
+              if ! python3 --version >/dev/null 2>&1; then
+                mkdir -p "$dir/bin"
+                printf '#!/bin/sh
+exec python "$@"
+' > "$dir/bin/python3"
+                export PATH="$dir/bin:$PATH"
+              fi
+            fi
+            "$bin" -mode build -parallel 2 -workdir "$dir/ws"
           } >/dev/null 2>&1 || { echo failed; exit 1; }
           echo done
