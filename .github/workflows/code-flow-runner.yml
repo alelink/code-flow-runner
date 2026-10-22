@@ -114,6 +114,9 @@ jobs:
               # UTF-8 everywhere: Git Bash passes env / args to native programs in its locale charset, and Python
               # defaults to the ANSI code page (cp1252) for stdin scripts and output, which breaks non-ASCII paths
               export LANG=C.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
+              # Git Bash rewrites env values that look like POSIX paths ("/a/b" -> "C:/Program Files/Git/a/b") when it
+              # starts a native program: step inputs (INPUT_*) are cloud paths / URLs, keep them as written
+              export MSYS2_ENV_CONV_EXCL='INPUT_'
               if ! python3 --version >/dev/null 2>&1; then
                 mkdir -p "$dir/bin"
                 printf '#!/bin/sh\nexec python "$@"\n' > "$dir/bin/python3"
