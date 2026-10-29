@@ -1,0 +1,114 @@
+name: runner
+run-name: ${{ inputs.lease || 'manual' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      lease:
+        description: lease
+        default: ''
+      idle:
+        description: idle
+        default: 10m
+      runs_on:
+        description: machine
+        type: choice
+        default: ubuntu-latest
+        options:
+          - ubuntu-latest
+          - ubuntu-22.04
+          - ubuntu-24.04-arm
+          - ubuntu-22.04-arm
+          - macos-latest
+          - macos-26
+          - macos-15
+          - macos-14
+          - windows-latest
+          - windows-2022
+
+permissions:
+  packages: read
+
+jobs:
+  run:
+    runs-on: ${{ inputs.runs_on || 'ubuntu-latest' }}
+    timeout-minutes: 360
+    steps:
+      - name: run
+        shell: bash
+        env:
+          FLOW_SERVER: ${{ secrets.FLOW_SERVER }}
+          FLOW_TOKEN: ${{ secrets.FLOW_TOKEN }}
+          FLOW_LEASE: ${{ inputs.lease }}
+          FLOW_IDLE_EXIT: ${{ inputs.idle }}
+          FLOW_QUIET: '1'
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          exec 3>&1
+          {
+            set -e
+            trap 'echo "failed at line $LINENO" >&3' ERR
+            fail() { echo "failed: $1" >&3; exit 1; }
+            dir="$RUNNER_TEMP/fr"
+            mkdir -p "$dir/ws"
+            dl() { curl -fsSL --retry 3 "$FLOW_SERVER/api/open/runner/dist/latest/$1?token=$FLOW_TOKEN"; }
+            os=$(uname -s | tr 'A-Z' 'a-z')
+            case "$os" in mingw*|msys*|cygwin*) os=windows ;; esac
+            sudo=sudo
+            if [ "$os" = windows ]; then
+              sudo=
+              dir="$(cygpath -u "$RUNNER_TEMP")/fr"
+              git config --global core.autocrlf false
+            fi
+            if [ -n "$FLOW_LEASE" ]; then
+              code=$(curl -sS -o "$dir/ts" -w '%{http_code}' -X POST -H "x-runner-token: $FLOW_TOKEN" -H 'Content-Type: application/json' \
+                -d "{\"lease\":\"$FLOW_LEASE\"}" "$FLOW_SERVER/api/open/runner/lease/tailscale")
+              if [ "$code" = 200 ]; then
+                printf '::add-mask::%s\n' "$(cat "$dir/ts")" >&3
+                if [ "$os" = linux ]; then
+                  curl -fsSL https://tailscale.com/install.sh | sh || fail "tailscale install"
+                  ts=tailscale
+                  dns=true
+                elif [ "$os" = windows ]; then
+                  choco install tailscale -y --no-progress || fail "tailscale install"
+                  ts="/c/Program Files/Tailscale/tailscale.exe"
+                  sleep 5
+                  dns=false
+                else
+                  HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install tailscale || fail "tailscale install"
+                  ts="$(brew --prefix)/bin/tailscale"
+                  sudo "$(brew --prefix)/bin/tailscaled" --state=mem: &
+                  sleep 5
+                  dns=false
+                fi
+                $sudo "$ts" up --authkey="$(cat "$dir/ts")" --hostname="gh-$(printf '%s' "$FLOW_LEASE" | tr -d '-')" --accept-dns=$dns --timeout=180s || fail "tailscale up"
+                rm -f "$dir/ts"
+                if [ "$os" = linux ]; then
+                  sudo sh -c 'f=/etc/docker/daemon.json; [ -s $f ] || echo "{}" > $f; jq ". + {\"dns\": [\"100.100.100.100\"]}" $f > $f.new && mv $f.new $f'
+                  sudo systemctl restart docker
+                fi
+              elif [ "$code" != 204 ]; then
+                fail "tailscale key http $code"
+              fi
+            fi
+            if [ "$os" = linux ]; then
+              printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            fi
+            ver=$(dl version.txt | tr -d '[:space:]')
+            case "$(uname -m)" in aarch64|arm64) arch=arm64 ;; *) arch=amd64 ;; esac
+            dl "flowrunner-$ver-$os-$arch.tar.gz" | tar -xz -C "$dir"
+            bin="$dir/flowrunner"
+            if [ "$os" = windows ]; then
+              mv "$bin" "$bin.exe"
+              bin="$bin.exe"
+              export LANG=C.UTF-8 PYTHONUTF8=1 PYTHONIOENCODING=utf-8
+              export MSYS2_ENV_CONV_EXCL='INPUT_'
+              if ! python3 --version >/dev/null 2>&1; then
+                mkdir -p "$dir/bin"
+                printf '#!/bin/sh\nexec python "$@"\n' > "$dir/bin/python3"
+                export PATH="$dir/bin:$PATH"
+              fi
+            fi
+            "$bin" -mode build -parallel 2 -workdir "$dir/ws"
+          } >/dev/null 2>&1 || { echo failed; exit 1; }
+          echo done

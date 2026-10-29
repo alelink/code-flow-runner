@@ -1,0 +1,54 @@
+# Managed by code-flow: sync step images to GHCR. Changes are overwritten on the next sync.
+name: sync-images
+run-name: sync ${{ inputs.sync }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      sync:
+        description: sync
+        required: true
+      images:
+        description: images
+        required: true
+
+permissions:
+  packages: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: sync
+        env:
+          FLOW_SERVER: ${{ secrets.FLOW_SERVER }}
+          FLOW_TOKEN: ${{ secrets.FLOW_TOKEN }}
+          SYNC_ID: ${{ inputs.sync }}
+          IMAGES: ${{ inputs.images }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          api() { curl -fsS --retry 3 -X POST -H "x-runner-token: $FLOW_TOKEN" -H 'Content-Type: application/json' -d "$2" "$FLOW_SERVER/api/open/runner/ghcr/$1"; }
+          report() { api report "$1" >/dev/null 2>&1 || true; }
+          cred=$(api credential "$(jq -nc --arg s "$SYNC_ID" '{sync:$s}')" 2>/dev/null) || { echo failed; exit 1; }
+          src=$(printf '%s' "$cred" | jq -r .registry)
+          user=$(printf '%s' "$cred" | jq -r .username)
+          pass=$(printf '%s' "$cred" | jq -r .password)
+          # values fetched at runtime are not masked automatically (only repo secrets are)
+          printf '::add-mask::%s\n' "$pass"
+          command -v skopeo >/dev/null 2>&1 || { sudo apt-get update -qq && sudo apt-get install -y -qq skopeo; } >/dev/null 2>&1
+          dst="ghcr.io/$(printf '%s' "$GITHUB_REPOSITORY" | tr 'A-Z' 'a-z')"
+          failed=0
+          for img in $IMAGES; do
+            if skopeo copy --all --retry-times 3 --src-creds "$user:$pass" --dest-creds "$GITHUB_ACTOR:$GH_TOKEN" \
+              --digestfile "$RUNNER_TEMP/digest" "docker://$src/$img" "docker://$dst/$img" >/dev/null 2>"$RUNNER_TEMP/err"; then
+              report "$(jq -nc --arg s "$SYNC_ID" --arg i "$img" --arg d "$(cat "$RUNNER_TEMP/digest")" '{sync:$s,image:$i,digest:$d}')"
+              echo "$img ok"
+            else
+              report "$(jq -nc --arg s "$SYNC_ID" --arg i "$img" --arg e "$(tail -c 300 "$RUNNER_TEMP/err")" '{sync:$s,image:$i,error:$e}')"
+              echo "$img failed"
+              failed=1
+            fi
+          done
+          report "$(jq -nc --arg s "$SYNC_ID" '{sync:$s,done:true}')"
+          exit $failed
